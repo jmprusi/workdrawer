@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+:root {
+  --font-family: system-ui, -apple-system, sans-serif;
+  --font-size: 14px;
+  --h1-size: 20px;
+  --h2-size: 17px;
+  --h3-size: 15px;
+  --code-size: 13px;
+  --color: #1a1a1a;
+  --bg: #ffffff;
+  --heading-color: #1a6fad;
+  --link-color: #0066cc;
+  --code-color: #c7254e;
+  --code-bg: rgba(0,0,0,0.07);
+  --pre-bg: rgba(0,0,0,0.05);
+  --blockquote-color: #666;
+  --blockquote-border: #ccc;
+  --border-color: #ddd;
+  --th-bg: rgba(0,0,0,0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color: #e0e0e0;
+    --bg: #1e1e1e;
+    --heading-color: #5ba7dd;
+    --link-color: #66aaee;
+    --code-color: #ff6b81;
+    --code-bg: rgba(255,255,255,0.1);
+    --pre-bg: rgba(255,255,255,0.05);
+    --blockquote-color: #999;
+    --blockquote-border: #555;
+    --border-color: #444;
+    --th-bg: rgba(255,255,255,0.05);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  line-height: 1.6;
+  padding: 16px 20px;
+  margin: 0;
+  color: var(--color);
+  background: var(--bg);
+  word-wrap: break-word;
+}
+h1,h2,h3,h4,h5,h6 { color: var(--heading-color); margin: 0.8em 0 0.4em; font-weight: bold; }
+h1 { font-size: var(--h1-size); }
+h2 { font-size: var(--h2-size); }
+h3 { font-size: var(--h3-size); }
+h4,h5,h6 { font-size: var(--font-size); }
+p { margin: 0.5em 0; }
+ul,ol { padding-left: 1.5em; margin: 0.5em 0; }
+li { margin: 0.2em 0; }
+li p { margin: 0; }
+input[type="checkbox"] { cursor: pointer; margin-right: 6px; width: 14px; height: 14px; vertical-align: middle; }
+a { color: var(--link-color); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: ui-monospace, monospace; font-size: var(--code-size); background: var(--code-bg); padding: 1px 4px; border-radius: 3px; color: var(--code-color); }
+pre { background: var(--pre-bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 0.8em 0; }
+pre code { background: none; padding: 0; color: inherit; }
+blockquote { border-left: 3px solid var(--blockquote-border); margin: 0.5em 0; padding: 4px 12px; color: var(--blockquote-color); font-style: italic; }
+table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
+th,td { border: 1px solid var(--border-color); padding: 6px 12px; text-align: left; }
+th { background: var(--th-bg); font-weight: bold; }
+hr { border: none; border-top: 1px solid var(--border-color); margin: 1em 0; }
+.mermaid { margin: 0.8em 0; text-align: center; }
+del { opacity: 0.6; }
+</style>
+<script src="marked.min.js"></script>
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="content"></div>
+<script>
+var cbIndices = [];
+var mermaidReady = false;
+
+function applyStyles(fontFamily, fontSize) {
+  var family = (fontFamily && fontFamily.length > 0)
+    ? '"' + fontFamily + '", system-ui, -apple-system, sans-serif'
+    : 'system-ui, -apple-system, sans-serif';
+  var sz = fontSize || 14;
+  var r = document.documentElement.style;
+  r.setProperty('--font-family', family);
+  r.setProperty('--font-size', sz + 'px');
+  r.setProperty('--h1-size', (sz + 6) + 'px');
+  r.setProperty('--h2-size', (sz + 3) + 'px');
+  r.setProperty('--h3-size', (sz + 1) + 'px');
+  r.setProperty('--code-size', (sz - 1) + 'px');
+}
+
+function setupCheckboxes() {
+  document.querySelectorAll('input[type="checkbox"]').forEach(function(cb, i) {
+    cb.removeAttribute('disabled');
+    cb.addEventListener('change', function() {
+      var idx = cbIndices[i] !== undefined ? cbIndices[i] : -1;
+      window.webkit.messageHandlers.checkbox.postMessage(idx);
+    });
+  });
+}
+
+async function renderContent(markdown) {
+  var hasMermaid = markdown.indexOf('```mermaid') !== -1;
+  document.getElementById('content').innerHTML = marked.parse(markdown);
+  setupCheckboxes();
+  if (hasMermaid && mermaidReady) {
+    try { await mermaid.run({ querySelector: '.mermaid' }); } catch(e) {}
+  }
+}
+
+function updateContent(markdown, indices) {
+  cbIndices = indices;
+  renderContent(markdown);
+}
+
+function init(fontFamily, fontSize, markdown, indices) {
+  applyStyles(fontFamily, fontSize);
+  cbIndices = indices;
+
+  marked.use({
+    gfm: true,
+    breaks: true,
+    extensions: [{
+      name: 'mermaid',
+      level: 'block',
+      start(src) { return src.indexOf('```mermaid'); },
+      tokenizer(src) {
+        const match = src.match(/^```mermaid\n([\s\S]*?)```/);
+        if (match) return { type: 'mermaid', raw: match[0], text: match[1].trim() };
+      },
+      renderer(token) {
+        return '<div class="mermaid">' + token.text + '</div>\n';
+      }
+    }]
+  });
+
+  var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default', securityLevel: 'loose' });
+  mermaidReady = true;
+
+  renderContent(markdown);
+}
+
+function updateStyles(fontFamily, fontSize) {
+  applyStyles(fontFamily, fontSize);
+}
+</script>
+</body>
+</html>
