@@ -109,6 +109,10 @@ struct SettingsView: View {
             }
 
             Section("Behavior") {
+                LabeledContent("Keyboard Shortcut") {
+                    ShortcutRecorderView()
+                }
+                
                 Picker("Open on screen of", selection: $openBehavior) {
                     Text("Mouse Cursor").tag("mouseCursor")
                     Text("Focused Window").tag("focusedWindow")
