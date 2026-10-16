@@ -5,10 +5,14 @@ A macOS menubar app that slides a scratch-pad window up from the bottom of the s
 <img width="2056" height="1329" alt="image" src="https://github.com/user-attachments/assets/ee5397dd-b7d7-4f1a-a0fc-a0205c85a63e" />
 
 The window is split into two panes:
-- **Left**: a freehand drawing canvas with undo/redo, zoom, copy, and save to PNG
-- **Right**: a markdown notes editor with syntax highlighting and rendered preview (supports Mermaid diagrams), across four tabs (Command + 1-4 to switch notes, and Command+R to toggle the markdown rendering)
+- **Left**: a freehand drawing canvas with adjustable pen and eraser sizes, undo/redo, zoom, copy, and save to PNG
+- **Right**: a markdown notes editor with syntax highlighting and rendered preview (supports Mermaid diagrams), plus a GitHub pull request panel. Use Command+1 for Notes, Command+2 for PRs, and Command+R to toggle the markdown preview.
 
 Notes and drawings are persisted automatically on a choosen path.
+
+The notes editor uses `note_0.txt`. Existing `note_1.txt` through `note_3.txt` files from the previous four-tab editor remain in the save folder and can be opened separately.
+
+The PR panel requires the [GitHub CLI](https://cli.github.com/): install it with `brew install gh`, then run `gh auth login`. It lists pull requests authored by or involving you, with check statuses, owner filters, and an option to include closed pull requests. Results refresh every five minutes and are cached locally in the app's preferences.
 
 Support dark/light/auto theme modes.
 

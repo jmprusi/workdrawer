@@ -10,7 +10,7 @@ internal import UniformTypeIdentifiers
 
 struct ContentView: View {
     var onClose: () -> Void
-    @State private var splitPosition: CGFloat = 0.5
+    @State private var splitPosition: CGFloat = 0.3
     @State private var shouldLoadExisting = true
     @StateObject private var themePreferences = ThemePreferences.shared
 
@@ -23,7 +23,7 @@ struct ContentView: View {
                 DividerView(splitPosition: $splitPosition, totalWidth: geometry.size.width)
                     .frame(width: 8)
 
-                NotesEditorView(shouldLoadExisting: $shouldLoadExisting)
+                SidePanelView(shouldLoadExisting: $shouldLoadExisting)
                     .frame(width: geometry.size.width * (1 - splitPosition) - 8)
             }
         }
@@ -33,6 +33,70 @@ struct ContentView: View {
             Button("", action: onClose)
                 .keyboardShortcut(.escape, modifiers: [])
                 .hidden()
+        }
+    }
+}
+
+enum SidePanelTab: String, CaseIterable {
+    case notes = "Notes"
+    case pullRequests = "PRs"
+
+    var shortcutLabel: String {
+        switch self {
+        case .notes: return "⌘1"
+        case .pullRequests: return "⌘2"
+        }
+    }
+}
+
+struct SidePanelView: View {
+    @Binding var shouldLoadExisting: Bool
+    @State private var selectedTab: SidePanelTab = .notes
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(SidePanelTab.allCases, id: \.self) { tab in
+                    Button(action: { selectedTab = tab }) {
+                        HStack(spacing: 4) {
+                            Text(tab.rawValue)
+                                .font(.system(size: 12))
+                            Text(tab.shortcutLabel)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(selectedTab == tab
+                            ? Color(NSColor.selectedControlColor)
+                            : Color(NSColor.controlBackgroundColor))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(selectedTab == tab ? .primary : .secondary)
+                    .overlay(alignment: .bottom) {
+                        if selectedTab == tab {
+                            Color.accentColor.frame(height: 2)
+                        }
+                    }
+                }
+            }
+            .frame(height: 28)
+
+            switch selectedTab {
+            case .notes:
+                NotesEditorView(shouldLoadExisting: $shouldLoadExisting)
+            case .pullRequests:
+                PullRequestsView()
+            }
+        }
+        .background {
+            Group {
+                Button("", action: { selectedTab = .notes })
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("", action: { selectedTab = .pullRequests })
+                    .keyboardShortcut("2", modifiers: .command)
+            }
+            .hidden()
         }
     }
 }
@@ -80,11 +144,18 @@ struct DrawingCanvasView: View {
     @State private var undoStack: [Line] = []
     @State private var undoneLines: [Line] = []
     @State private var currentLine: Line?
+    @State private var penWidth: CGFloat = 2
+    @State private var isEraserMode: Bool = false
+    @State private var eraserWidth: CGFloat = 24
+    @State private var hoverLocation: CGPoint?
     @State private var zoomLevel: CGFloat = 1.0
     @State private var baseZoomLevel: CGFloat = 1.0
     @State private var canvasSize: CGSize = .zero
     @State private var hasLoadedInitial = false
     @Environment(\.colorScheme) var colorScheme
+
+    private static let penWidths: [CGFloat] = [1, 2, 4, 6, 10]
+    private static let eraserWidths: [CGFloat] = [12, 24, 40, 60, 90]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -112,6 +183,49 @@ struct DrawingCanvasView: View {
                 }
                 .disabled(lines.isEmpty)
                 .help("Clear All")
+
+                Divider()
+                    .frame(height: 20)
+
+                Button(action: { isEraserMode = false }) {
+                    Image(systemName: "pencil")
+                        .frame(width: 20, height: 20)
+                        .padding(4)
+                        .background(isEraserMode ? Color.clear : Color.accentColor.opacity(0.3))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Pencil")
+
+                Button(action: { isEraserMode = true }) {
+                    Image(systemName: "eraser")
+                        .frame(width: 20, height: 20)
+                        .padding(4)
+                        .background(isEraserMode ? Color.accentColor.opacity(0.3) : Color.clear)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Eraser")
+
+                Divider()
+                    .frame(height: 20)
+
+                Menu {
+                    ForEach(isEraserMode ? Self.eraserWidths : Self.penWidths, id: \.self) { width in
+                        Button(action: {
+                            if isEraserMode { eraserWidth = width } else { penWidth = width }
+                        }) {
+                            Label("\(Int(width)) pt", systemImage: (isEraserMode ? eraserWidth : penWidth) == width ? "checkmark" : "")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "scribble")
+                        .frame(width: 20, height: 20)
+                        .padding(4)
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 28)
+                .help(isEraserMode ? "Eraser Size" : "Pen Width")
 
                 Divider()
                     .frame(height: 20)
@@ -164,24 +278,16 @@ struct DrawingCanvasView: View {
             GeometryReader { geometry in
                 ScrollView([.horizontal, .vertical], showsIndicators: true) {
                     Canvas { context, size in
-                        for line in lines {
-                            var path = Path()
-                            guard let firstPoint = line.points.first else { continue }
-                            path.move(to: firstPoint)
-                            for point in line.points.dropFirst() {
-                                path.addLine(to: point)
-                            }
-                            context.stroke(path, with: .color(line.color), lineWidth: line.width)
-                        }
-
+                        renderLines(lines, in: &context)
                         if let currentLine = currentLine {
-                            var path = Path()
-                            guard let firstPoint = currentLine.points.first else { return }
-                            path.move(to: firstPoint)
-                            for point in currentLine.points.dropFirst() {
-                                path.addLine(to: point)
-                            }
-                            context.stroke(path, with: .color(currentLine.color), lineWidth: currentLine.width)
+                            renderLines([currentLine], in: &context)
+                        }
+                        if isEraserMode, let hoverLocation {
+                            let radius = eraserWidth / 2
+                            let rect = CGRect(x: hoverLocation.x - radius, y: hoverLocation.y - radius, width: eraserWidth, height: eraserWidth)
+                            let outline = Path(ellipseIn: rect)
+                            context.fill(outline, with: .color(.gray.opacity(0.25)))
+                            context.stroke(outline, with: .color(.gray), lineWidth: 1)
                         }
                     }
                     .frame(
@@ -190,6 +296,14 @@ struct DrawingCanvasView: View {
                     )
                     .background(Color.white)
                     .scaleEffect(zoomLevel, anchor: .topLeading)
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            hoverLocation = CGPoint(x: location.x / zoomLevel, y: location.y / zoomLevel)
+                        case .ended:
+                            hoverLocation = nil
+                        }
+                    }
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
@@ -197,8 +311,9 @@ struct DrawingCanvasView: View {
                                     x: value.location.x / zoomLevel,
                                     y: value.location.y / zoomLevel
                                 )
+                                hoverLocation = adjustedLocation
                                 if currentLine == nil {
-                                    currentLine = Line(points: [adjustedLocation], color: .black, width: 2)
+                                    currentLine = Line(points: [adjustedLocation], color: .black, width: isEraserMode ? eraserWidth : penWidth, isEraser: isEraserMode)
                                 } else {
                                     currentLine?.points.append(adjustedLocation)
                                 }
@@ -325,15 +440,7 @@ struct DrawingCanvasView: View {
 
     var drawingContent: some View {
         Canvas { context, size in
-            for line in lines {
-                var path = Path()
-                guard let firstPoint = line.points.first else { continue }
-                path.move(to: firstPoint)
-                for point in line.points.dropFirst() {
-                    path.addLine(to: point)
-                }
-                context.stroke(path, with: .color(line.color), lineWidth: line.width)
-            }
+            renderLines(lines, in: &context)
         }
         .frame(width: 800, height: 600)
         .background(Color.white)
@@ -342,64 +449,26 @@ struct DrawingCanvasView: View {
 
 struct NotesEditorView: View {
     @Binding var shouldLoadExisting: Bool
-    @State private var selectedTab: Int = 0
-    @State private var tabContents: [String] = Array(repeating: "", count: 4)
+    @State private var noteContent: String = ""
     @State private var hasLoadedInitial = false
-    @State private var isPreviewMode: [Bool] = Array(repeating: false, count: 4)
+    @State private var isPreviewMode: Bool = false
     @StateObject private var fontPrefs = FontPreferences.shared
     @State private var showSearch = false
     @State private var searchText = ""
     @FocusState private var searchFieldFocused: Bool
 
-    private let tabNames = ["Note 1", "Note 2", "Note 3", "Note 4"]
-
-    private func tabTitle(for index: Int) -> String {
-        let content = tabContents[index]
-        let firstLine = content.components(separatedBy: .newlines).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? ""
-        let stripped = firstLine.drop(while: { $0 == "#" || $0 == " " })
-        let title = stripped.trimmingCharacters(in: .whitespaces)
-        if title.isEmpty {
-            return tabNames[index]
-        }
-        return "\(tabNames[index]): \(title)"
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                ForEach(0..<tabNames.count, id: \.self) { index in
-                    Button(action: { selectedTab = index }) {
-                        Text(tabTitle(for: index))
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .foregroundColor(selectedTab == index ? .primary : .secondary)
-                    .background(selectedTab == index
-                        ? Color(NSColor.selectedControlColor)
-                        : Color(NSColor.controlBackgroundColor))
-                    .contentShape(Rectangle())
-                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
-                    .overlay(alignment: .bottom) {
-                        if selectedTab == index {
-                            Color.accentColor.frame(height: 2)
-                        }
-                    }
-                }
+                Spacer()
 
-                Divider()
-                    .frame(height: 20)
-                    .padding(.vertical, 6)
-
-                Button(action: { isPreviewMode[selectedTab].toggle() }) {
-                    Image(systemName: isPreviewMode[selectedTab] ? "eye.slash" : "eye")
+                Button(action: { isPreviewMode.toggle() }) {
+                    Image(systemName: isPreviewMode ? "eye.slash" : "eye")
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .frame(maxHeight: .infinity)
-                .help(isPreviewMode[selectedTab] ? "Edit Markdown" : "Preview")
+                .help(isPreviewMode ? "Edit Markdown" : "Preview")
                 .keyboardShortcut(KeyEquivalent("r"), modifiers: .command)
             }
             .frame(height: 32)
@@ -435,22 +504,16 @@ struct NotesEditorView: View {
                 .onAppear { searchFieldFocused = true }
             }
 
-            if isPreviewMode[selectedTab] {
+            if isPreviewMode {
                 WebPreviewView(
-                    text: Binding(
-                        get: { tabContents[selectedTab] },
-                        set: { tabContents[selectedTab] = $0 }
-                    ),
+                    text: $noteContent,
                     fontSize: fontPrefs.fontSize,
                     fontFamily: fontPrefs.fontFamily,
                     searchText: searchText
                 )
             } else {
                 NotesTextView(
-                    text: Binding(
-                        get: { tabContents[selectedTab] },
-                        set: { tabContents[selectedTab] = $0 }
-                    ),
+                    text: $noteContent,
                     fontSize: fontPrefs.fontSize,
                     fontFamily: fontPrefs.fontFamily,
                     searchText: searchText
@@ -466,23 +529,21 @@ struct NotesEditorView: View {
             .keyboardShortcut("f", modifiers: .command)
             .hidden()
         }
-        .onChange(of: tabContents) { oldContents, newContents in
-            for (index, (old, new)) in zip(oldContents, newContents).enumerated() {
-                if old != new {
-                    PersistenceManager.shared.saveNote(new, tabIndex: index)
-                }
+        .onChange(of: noteContent) { old, new in
+            if old != new {
+                PersistenceManager.shared.saveNote(new)
             }
         }
         .onAppear {
             if !hasLoadedInitial {
                 hasLoadedInitial = true
                 if shouldLoadExisting {
-                    tabContents = PersistenceManager.shared.loadAllNotes(count: 4)
+                    noteContent = PersistenceManager.shared.loadNote()
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .savePathChanged)) { _ in
-            tabContents = PersistenceManager.shared.loadAllNotes(count: 4)
+            noteContent = PersistenceManager.shared.loadNote()
         }
     }
 }
@@ -675,6 +736,25 @@ struct Line: Equatable {
     var points: [CGPoint]
     var color: Color
     var width: CGFloat
+    var isEraser: Bool = false
+}
+
+func renderLines(_ lines: [Line], in context: inout GraphicsContext) {
+    for line in lines {
+        guard let firstPoint = line.points.first else { continue }
+        var path = Path()
+        path.move(to: firstPoint)
+        for point in line.points.dropFirst() {
+            path.addLine(to: point)
+        }
+        if line.isEraser {
+            context.blendMode = .clear
+            context.stroke(path, with: .color(.black), lineWidth: line.width)
+            context.blendMode = .normal
+        } else {
+            context.stroke(path, with: .color(line.color), lineWidth: line.width)
+        }
+    }
 }
 
 #Preview {

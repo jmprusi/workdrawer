@@ -20,6 +20,7 @@ private struct CodableLine: Codable {
     var blue: Double
     var alpha: Double
     var width: CGFloat
+    var isEraser: Bool
 
     init(from line: Line) {
         self.points = line.points.map { CodablePoint(x: $0.x, y: $0.y) }
@@ -27,13 +28,26 @@ private struct CodableLine: Codable {
         NSColor(line.color).usingColorSpace(.sRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
         self.red = r; self.green = g; self.blue = b; self.alpha = a
         self.width = line.width
+        self.isEraser = line.isEraser
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        points = try container.decode([CodablePoint].self, forKey: .points)
+        red = try container.decode(Double.self, forKey: .red)
+        green = try container.decode(Double.self, forKey: .green)
+        blue = try container.decode(Double.self, forKey: .blue)
+        alpha = try container.decode(Double.self, forKey: .alpha)
+        width = try container.decode(CGFloat.self, forKey: .width)
+        isEraser = try container.decodeIfPresent(Bool.self, forKey: .isEraser) ?? false
     }
 
     func toLine() -> Line {
         Line(
             points: points.map { CGPoint(x: $0.x, y: $0.y) },
             color: Color(red: red, green: green, blue: blue, opacity: alpha),
-            width: width
+            width: width,
+            isEraser: isEraser
         )
     }
 }
@@ -87,17 +101,15 @@ class PersistenceManager {
         try? pngData.write(to: saveDirectory.appendingPathComponent("drawing.png"))
     }
 
-    func saveNote(_ text: String, tabIndex: Int) {
+    func saveNote(_ text: String) {
         ensureDirectory()
-        let url = saveDirectory.appendingPathComponent("note_\(tabIndex).txt")
+        let url = saveDirectory.appendingPathComponent("note_0.txt")
         try? text.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    func loadAllNotes(count: Int) -> [String] {
-        return (0..<count).map { index in
-            let url = saveDirectory.appendingPathComponent("note_\(index).txt")
-            return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        }
+    func loadNote() -> String {
+        let url = saveDirectory.appendingPathComponent("note_0.txt")
+        return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
     }
 }
 
@@ -107,15 +119,7 @@ private struct DrawingExportView: View {
 
     var body: some View {
         Canvas { context, _ in
-            for line in lines {
-                var path = Path()
-                guard let first = line.points.first else { continue }
-                path.move(to: first)
-                for point in line.points.dropFirst() {
-                    path.addLine(to: point)
-                }
-                context.stroke(path, with: .color(line.color), lineWidth: line.width)
-            }
+            renderLines(lines, in: &context)
         }
         .frame(width: size.width, height: size.height)
         .background(Color.white)
